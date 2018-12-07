@@ -123,6 +123,7 @@ def calculate_best_token_distribution(all_nodes, node_permutations)
   end
 
   least_variance_index = variance_sums_per_permutation.index(variance_sums_per_permutation.min)
+  least_variance = variance_sums_per_permutation[least_variance_index]
   first_preferred_ips = node_permutations[least_variance_index].map(&:ip)
 
   next_preferred_variance = nil
@@ -131,8 +132,9 @@ def calculate_best_token_distribution(all_nodes, node_permutations)
     next_preferred_variance = [ next_preferred_variance || sum+1, sum ].min
   end
   next_least_variance_index = variance_sums_per_permutation.index(next_preferred_variance)
+  next_least_variance = variance_sums_per_permutation[next_least_variance_index]
   next_preferred_ips = node_permutations[next_least_variance_index].map(&:ip)
-  [ first_preferred_ips, next_preferred_ips ]
+  [ first_preferred_ips, next_preferred_ips, least_variance, next_least_variance ]
 end
 
 def format_ip_list(ips)
@@ -148,8 +150,17 @@ puts "decommission plan:"
 nodes_by_rack.each do |rack, nodes|
   if nodes.size > nodes_to_remove_from_each_rack
     node_permutations = nodes.permutation(nodes_to_remove_from_each_rack).to_a
-    best_nodes_to_decommission, next_best_nodes_to_decommission = calculate_best_token_distribution(nodes, node_permutations)
-    puts "=> #{rack}: #{format_ip_list(best_nodes_to_decommission)} (next best: #{format_ip_list(next_best_nodes_to_decommission)})"
+    best_nodes_to_decommission,
+    next_best_nodes_to_decommission,
+    least_variance,
+    next_least_variance = calculate_best_token_distribution(nodes, node_permutations)
+    puts "=> %s: %s [%.2e] (next best: %s [%.2e])" % [
+      rack,
+      format_ip_list(best_nodes_to_decommission),
+      least_variance,
+      format_ip_list(next_best_nodes_to_decommission),
+      next_least_variance
+    ]
   else
     puts "=> #{rack}: unable to remove #{nodes_to_remove_from_each_rack} nodes from this rack"
   end
