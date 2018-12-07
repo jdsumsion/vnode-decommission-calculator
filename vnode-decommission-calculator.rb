@@ -54,7 +54,6 @@ end
 puts "calculating..."
 
 nodes_by_address = {}
-nodes_by_token = {}
 ring_output_file = ARGV[0]
 contains_leaving_nodes = false
 current_dc = ""
@@ -76,7 +75,6 @@ ring_output.each do |line|
     node = Node.new(ip, current_dc, rack, [ token ])
 
     add_or_merge(nodes_by_address, node.ip, node)
-    nodes_by_token[token] = node  # unique tokens means no merge
     next
   end
   raise "unrecognized line: #{line}"
@@ -95,7 +93,7 @@ puts "rack descr:"
 nodes_by_rack.each do |rack, nodes|
   puts "- #{rack}: #{nodes.size}"
 end
-puts "token count: #{nodes_by_token.size}"
+puts "token count: #{nodes_by_address.values.map(&:tokens).map(&:size).sum}"
 
 def calculate_token_mean_variance_without_node(nodes, ip)
   nodes.delete_if{|node| ip == node.ip}
