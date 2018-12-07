@@ -25,7 +25,7 @@ class Node
     @ip = ip
     @dc = dc
     @rack = rack
-    @tokens = tokens
+    @tokens = tokens.sort
   end
 
   def dc_and_rack
