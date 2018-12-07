@@ -95,13 +95,25 @@ nodes_by_rack.each do |rack, nodes|
 end
 puts "token count: #{nodes_by_address.values.map(&:tokens).map(&:size).sum}"
 
+def force_64_bit_overflow(n)
+  ((n + 2**63) % 2**64) - 2**63
+end
+
+def count_tokens(node, nodes_by_tokens)
+  [ *nodes_by_tokens, nodes_by_tokens.first ].each_cons(2).reduce(0) do |count, ((start_token, node_to_check), (end_token, _))|
+    count + (node.equal?(node_to_check) && force_64_bit_overflow(end_token - start_token) || 0)
+  end
+end
+
 def calculate_token_mean_variance_without_node(nodes, ip)
   nodes.delete_if{|node| ip == node.ip}
-  remaining_tokens = nodes.map(&:tokens).flatten
-  mean = remaining_tokens.reduce(:+) / remaining_tokens.size.to_f
+  nodes_by_tokens = Hash[nodes.map{|node| node.tokens.zip([node].cycle)}.flatten(1).sort_by{|token,node| token}]
+  token_counts = nodes.map{|node| count_tokens(node, nodes_by_tokens) }
+
+  mean = token_counts.reduce(:+) / token_counts.size.to_f
   mean_variance = 0.0
-  remaining_tokens.each do |token|
-    mean_variance += (token - mean).abs
+  token_counts.each do |token_count|
+    mean_variance += (token_count - mean).abs
   end
   #puts "mean_variance without #{ip} is #{mean_variance}"
   mean_variance
@@ -113,11 +125,11 @@ def calculate_best_token_distribution(all_nodes, node_permutations)
   node_permutations.each_with_index do |permutation, i|
     nodes = Array[*all_nodes]
     mean_variance_sum = 0
-    #puts "permutation: #{permutation.map(&:ip).join ','}"
     permutation.each do |node|
       mean_variance_sum += calculate_token_mean_variance_without_node(nodes, node.ip)
     end
     variance_sums_per_permutation[i] = mean_variance_sum
+    #puts "permutation: #{permutation.map(&:ip).join ','}: #{variance_sums_per_permutation[i]}"
   end
 
   least_variance_index = variance_sums_per_permutation.index(variance_sums_per_permutation.min)
