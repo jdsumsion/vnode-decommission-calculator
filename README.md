@@ -1,3 +1,10 @@
+WARNING
+===
+
+This utility is not ready for prime-time.  I'm not sure if it will ever be a
+general-purpose tool.  I've run into issues applying the predictions of this
+calculator on real clusters.
+
 Explanation
 ===
 
