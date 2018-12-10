@@ -1,7 +1,9 @@
 #!/usr/bin/env ruby
 
+require 'json'
+
 def usage_and_exit
-  $stderr.puts "usage: #{File.basename($0)} <nodetool-ring.out> [nodes-to-remove-from-each-rack]"
+  $stderr.puts "usage: #{File.basename($0)} <nodetool-ring.out>"
   exit 1
 end
 
@@ -15,14 +17,6 @@ DEBUG=false
 
 def debug(*args)
   puts *args if DEBUG
-end
-
-nodes_to_remove_from_each_rack = 2
-if ARGV.size > 1
-  unless ARGV[1] =~ /^\d+$/
-    usage_and_exit
-  end
-  nodes_to_remove_from_each_rack = ARGV[1].to_i
 end
 
 class Node
@@ -41,7 +35,7 @@ class Node
   end
 
   def merge!(node)
-    raise "unmatched node: self=#{self} other=#{node}" if ip != node.ip or dc != node.dc or rack != node.rack
+    raise "unmatched node: self=#{self} other=#{node}" if ip != node.ip || dc != node.dc || rack != node.rack
     @tokens.concat(node.tokens)
     self
   end
@@ -88,20 +82,43 @@ ring_output.each do |line|
   raise "unrecognized line: #{line}"
 end
 
+options_file = File.join(File.dirname(ring_output_file), File.basename(ring_output_file) + ".options")
+options = JSON.parse(File.read(options_file)) rescue {}
+nodes_by_address.each_value.map(&:dc).uniq.each do |dc|
+  rf = options[dc]["rf"] rescue nil
+  if not rf
+    print "DC: #{dc}, Enter replication factor (aka RF, default 3): "
+    rf = $stdin.gets.chomp
+    rf = rf.size > 0 && rf.to_i || 3
+    print "DC: #{dc}, Enter node count to decommission (per-rack, default 2): "
+    decommission_count = $stdin.gets.chomp
+    decommission_count = decommission_count.size > 0 && decommission_count.to_i || 2
+    options[dc] = {}
+    options[dc]["rf"] = rf
+    options[dc]["decommission_count"] = decommission_count
+  end
+end
+File.write(options_file, JSON.pretty_generate(options))
+
 nodes_by_rack = Hash.new([])
 nodes_by_address.each_value do |node|
   nodes_by_rack[node.dc_and_rack] += [ node ]
 end
 
+nodes_by_token = Hash.new([])
+nodes_by_address.each_value do |node|
+  nodes_by_token.merge!(Hash[node.tokens.zip([node].cycle).sort_by{|token, node| -token}])
+end
+
 puts
-puts "nodes to remove from each rack: #{nodes_to_remove_from_each_rack}"
 puts "node count: #{nodes_by_address.size}"
 puts "rack count: #{nodes_by_rack.size}"
 puts "rack descr:"
 nodes_by_rack.each do |rack, nodes|
   puts "- #{rack}: #{nodes.size}"
 end
-puts "token count: #{nodes_by_address.values.map(&:tokens).map(&:size).sum}"
+puts "token count: #{nodes_by_token.size}"
+puts "config:\n#{JSON.pretty_generate(options)}"
 
 def force_64_bit_overflow(n)
   ((n + 2**63) % 2**64) - 2**63
@@ -178,8 +195,8 @@ end
 puts
 puts "decommission plan:"
 nodes_by_rack.each do |rack, nodes|
-  if nodes.size > nodes_to_remove_from_each_rack
-    node_permutations = nodes.permutation(nodes_to_remove_from_each_rack).to_a
+  if nodes.size > 2
+    node_permutations = nodes.permutation(2).to_a
     best_nodes_to_decommission,
     next_best_nodes_to_decommission,
     least_stddev,
@@ -193,7 +210,7 @@ nodes_by_rack.each do |rack, nodes|
     ]
     debug "\n*****************************************************************************"
   else
-    puts "=> #{rack}: unable to remove #{nodes_to_remove_from_each_rack} nodes from this rack"
+    puts "=> #{rack}: unable to remove #{2} nodes from this rack"
   end
 end
 
