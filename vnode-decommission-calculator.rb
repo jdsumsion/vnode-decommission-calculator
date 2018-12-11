@@ -21,17 +21,14 @@ end
 
 class Node
 
-  attr_accessor :ip, :dc, :rack, :tokens
+  attr_accessor :ip, :dc, :rack, :dc_and_rack, :tokens
 
   def initialize(ip, dc, rack, tokens=[])
     @ip = ip
     @dc = dc
     @rack = rack
+    @dc_and_rack = dc + ":" + rack
     @tokens = tokens.sort
-  end
-
-  def dc_and_rack
-    @dc + ":" + @rack
   end
 
   def merge!(node)
@@ -100,9 +97,9 @@ nodes_by_address.each_value.map(&:dc).uniq.each do |dc|
 end
 File.write(options_file, JSON.pretty_generate(options))
 
-nodes_by_rack = Hash.new([])
+nodes_by_dc_and_rack = Hash.new([])
 nodes_by_address.each_value do |node|
-  nodes_by_rack[node.dc_and_rack] += [ node ]
+  nodes_by_dc_and_rack[node.dc_and_rack] += [ node ]
 end
 
 nodes_by_token = Hash.new([])
@@ -112,10 +109,10 @@ end
 
 puts
 puts "node count: #{nodes_by_address.size}"
-puts "rack count: #{nodes_by_rack.size}"
+puts "rack count: #{nodes_by_dc_and_rack.size}"
 puts "rack descr:"
-nodes_by_rack.each do |rack, nodes|
-  puts "- #{rack}: #{nodes.size}"
+nodes_by_dc_and_rack.each do |dc_and_rack, nodes|
+  puts "- #{dc_and_rack}: #{nodes.size}"
 end
 puts "token count: #{nodes_by_token.size}"
 puts "config:\n#{JSON.pretty_generate(options)}"
@@ -130,19 +127,27 @@ def count_tokens_in_token_sets(token_sets)
   end
 end
 
-def count_tokens(node, nodes_by_tokens)
-  [ *nodes_by_tokens, *nodes_by_tokens[-3..-1] ].each_cons(4).reduce(0) do |count, token_sets|
-    node_to_check = token_sets[-1][1]
-    count + (node.equal?(node_to_check) && count_tokens_in_token_sets(token_sets) || 0)
+def count_tokens(node_to_count, nodes_by_token, replication_factor)
+  wraparound = nodes_by_token.select{|token, node| node.dc == node_to_count.dc}.reverse.uniq{|token, node| node.rack}.reverse
+  nodes_with_wraparound = nodes_by_token + wraparound
+  replica_sets = []
+  nodes_by_token.each do |token, node|
+    next if not node.equal?(node_to_count)
+    i = nodes_with_wraparound.rindex{|t, n| t == token}
+    end_ = [ i+10, nodes_with_wraparound.size ].min
+    replica_sets << nodes_with_wraparound[i..end_].select{|token, node| node.dc == node_to_count.dc}.uniq{|token, node| node.rack}
+  end
+  replica_sets.reduce(0) do |count, replica_set|
+    count + count_tokens_in_token_sets(replica_set)
   end
 end
 
-def calculate_token_stddev_without_node(nodes_in_rack, ip)
-  nodes_in_rack.delete_if{|node| ip == node.ip}
-  nodes_by_tokens = Hash[nodes_in_rack.map{|node| node.tokens.zip([node].cycle)}.flatten(1).sort_by{|token,node| token}]
-  debug "after removing #{ip}"
+def calculate_token_stddev_without_node(nodes_by_token, node_to_remove, replication_factor)
+  nodes_by_token.delete_if{|token| node_to_remove.tokens.include?(token)}
+  debug "after removing #{node_to_remove.ip}"
+  nodes_in_rack = nodes_by_token.map{|toke, node| node}.select{|node| node.dc_and_rack == node_to_remove.dc_and_rack}
   token_counts = nodes_in_rack.map do |node|
-    token_count = count_tokens(node, nodes_by_tokens)
+    token_count = count_tokens(node, nodes_by_token, replication_factor)  # don't count tokens using only the rack
     debug "node #{node.ip} has total tokens: #{token_count}"
     token_count
   end
@@ -155,17 +160,20 @@ def calculate_token_stddev_without_node(nodes_in_rack, ip)
   end
   variance = total_squares_from_mean / token_counts.size.to_f
   stddev = Math.sqrt(variance)
-  debug "stddev without #{ip} is #{stddev}"
+  debug "stddev without #{node_to_remove.ip} is #{stddev}"
   stddev
 end
 
-def calculate_best_token_distribution(nodes_in_rack, node_permutations)
+def calculate_best_nodes_to_decommission(nodes_by_token, node_permutations, replication_factor)
   stddevs_per_permutation = []
   permutation_size = node_permutations[0].size
+  dc = node_permutations[0][0].dc
   node_permutations.each_with_index do |permutation, i|
-    nodes = Array[*nodes_in_rack]
+    nodes = Array[*nodes_by_token.select{|token, node| dc == node.dc}]
     debug "\ntrying permutation: #{permutation.map(&:ip).inspect}"
-    stddevs = permutation.map{|node| calculate_token_stddev_without_node(nodes, node.ip)}
+    stddevs = permutation.map do |node|
+      calculate_token_stddev_without_node(nodes, node, replication_factor)
+    end
     stddevs_per_permutation[i] = stddevs.sum / stddevs.size.to_f
   end
 
@@ -194,15 +202,19 @@ end
 
 puts
 puts "decommission plan:"
-nodes_by_rack.each do |rack, nodes|
-  if nodes.size > 2
-    node_permutations = nodes.permutation(2).to_a
+nodes_by_dc_and_rack.each do |dc_and_rack, nodes|
+  dc = nodes[0].dc
+  nodes_to_decommission = options[dc]["decommission_count"]
+  replication_factor = options[dc]["replication_factor"]
+  next if nodes_to_decommission == 0
+  if nodes.size > nodes_to_decommission
+    node_permutations = nodes.permutation(nodes_to_decommission).to_a
     best_nodes_to_decommission,
     next_best_nodes_to_decommission,
     least_stddev,
-    next_least_stddev = calculate_best_token_distribution(nodes, node_permutations)
+    next_least_stddev = calculate_best_nodes_to_decommission(nodes_by_token, node_permutations, replication_factor)
     puts "=> %s: %s [%.2e] (next best: %s [%.2e])" % [
-      rack,
+      dc_and_rack,
       format_ip_list(best_nodes_to_decommission),
       least_stddev,
       format_ip_list(next_best_nodes_to_decommission),
@@ -210,7 +222,7 @@ nodes_by_rack.each do |rack, nodes|
     ]
     debug "\n*****************************************************************************"
   else
-    puts "=> #{rack}: unable to remove #{2} nodes from this rack"
+    puts "=> #{dc_and_rack}: unable to remove #{nodes_to_decommission} nodes from this rack"
   end
 end
 
