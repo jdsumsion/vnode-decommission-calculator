@@ -83,16 +83,12 @@ end
 options_file = File.join(File.dirname(ring_output_file), File.basename(ring_output_file) + ".options")
 options = JSON.parse(File.read(options_file)) rescue {}
 nodes_by_address.each_value.map(&:dc).uniq.each do |dc|
-  rf = options[dc]["rf"] rescue nil
-  if not rf
-    print "DC: #{dc}, Enter replication factor (aka RF, default 3): "
-    rf = $stdin.gets.chomp
-    rf = rf.size > 0 && rf.to_i || 3
+  decommission_count = options[dc]["decommission_count"] rescue nil
+  if not decommission_count
     print "DC: #{dc}, Enter node count to decommission (per-rack, default 2): "
     decommission_count = $stdin.gets.chomp
     decommission_count = decommission_count.size > 0 && decommission_count.to_i || 2
     options[dc] = {}
-    options[dc]["rf"] = rf
     options[dc]["decommission_count"] = decommission_count
   end
 end
