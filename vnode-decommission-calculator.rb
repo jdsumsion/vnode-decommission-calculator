@@ -106,7 +106,7 @@ puts "rack descr:"
 nodes_by_dc_and_rack.each do |dc_and_rack, nodes|
   puts "- #{dc_and_rack}: #{nodes.size}"
 end
-puts "token count: #{nodes_by_address.map{|addr, n| n.tokens}.flatten.sum}"
+puts "token count: #{nodes_by_address.each_value.map(&:tokens).flatten.size}"
 puts "config:\n#{JSON.pretty_generate(options)}"
 
 def force_64_bit_overflow(n)
